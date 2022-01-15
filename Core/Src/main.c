@@ -29,6 +29,7 @@
 #include "cs43l22.h"
 #include "waveplayer.h"
 #include "File_Handling.h"
+
 #include "lcd16x2_i2c.h"      //Librería para el control del LCD 16x2
 #include "nec_ir_stm32.h"     //Librería para la decodificación de la señal del sensor infrarrojos
 /* USER CODE END Includes */
