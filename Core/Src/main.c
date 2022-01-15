@@ -23,7 +23,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include<string.h>
+#include "AUDIO_LINK.h"
+#include "AUDIO.h"
+#include "cs43l22.h"
+#include "waveplayer.h"
+#include "File_Handling.h"
+#include "lcd16x2_i2c.h"      //Librería para el control del LCD 16x2
+#include "nec_ir_stm32.h"     //Librería para la decodificación de la señal del sensor infrarrojos
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,6 +48,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
 I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
@@ -48,8 +58,30 @@ I2S_HandleTypeDef hi2s3;
 DMA_HandleTypeDef hdma_spi3_tx;
 
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
+
+//VARIABLES DATOS INFRARROJOS
+volatile uint32_t buffer=0;     //Buffer para el almacenamiento de los datos recibidos por el IR
+uint8_t device=0;               //Código del elemento emisor
+uint8_t mensaje=0;              //Código del mensaje recibido
+volatile uint8_t flag_end=0;    //Marca para indicar que se han recibido nuevos datos del sensor IR. 0 si no lo ha hecho, 1 si si
+
+//VARIABLES FICHEROS Y CONTROL DE MUSICA
+uint8_t IsPlaying=0;			//Marca para indicar si se esta reproduciendo musica. 1 si se esta reproduciendo, 0 si no
+extern ApplicationTypeDef Appli_state;
+extern AUDIO_PLAYBACK_StateTypeDef AudioState;
+char nombre[40];				//Nombre de la canción que se está reproduciendo
+uint16_t idx;					//Indice de la canción que se está reproduciendo
+extern FILELIST_FileTypeDef FileList;  //Lista de canciones generada a partir de los archivos del USB
+uint8_t IsFinished=0;			//1 si ha terminado de reproducir la cancion
+
+//VARIABLES SENSOR TEMPERATURA
+volatile uint16_t ADC_value[3]={0,0,0};	//Valor leido del sensor de temperatura
+float temperatura=0;			//Temperatura media de las tres medidas
+float Vsense=0;					//Tension medida con el sensor
+uint8_t convCompleted=0;        //1 si se ha completado una lectura del sensor
 
 /* USER CODE END PV */
 
@@ -61,10 +93,14 @@ static void MX_I2C1_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_TIM3_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
-
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim);
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
+void imprimeLCD(uint8_t USB_connected,uint8_t* mensaje, uint8_t IsPlaying, char* nombre,float temperatura);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -107,8 +143,24 @@ int main(void)
   MX_USB_HOST_Init();
   MX_I2C2_Init();
   MX_TIM2_Init();
+  MX_ADC1_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
+  //Inicializacion interrupciones temporizador para receptor IR
+  HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_2);
+
+  //Inicializacion LCD
+  lcd16x2_i2c_init(&hi2c2);
+  lcd16x2_i2c_TwoLines();
+  lcd16x2_i2c_setCursor(0, 5);
+  lcd16x2_i2c_printf("Hola!!");
+  lcd16x2_i2c_setCursor(0, 0);
+  HAL_Delay(3000);
+
+  //Inicializacion sensor de temperatura y su temporizador
+  HAL_TIM_Base_Start(&htim3);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_value, 3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -119,6 +171,84 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
+    if(Appli_state==APPLICATION_READY)
+    {
+    	Mount_USB();
+    	AUDIO_PLAYER_Start(0);
+    	IsPlaying=1;
+        while(!IsFinished)
+        {
+       		AUDIO_PLAYER_Process(true);
+        	idx=getFilePos();
+        	if(strcmp(nombre,(char*)FileList.file[idx].name))
+        	{
+        		strcpy(nombre,(char*)FileList.file[idx].name);
+        		imprimeLCD(1,&mensaje, IsPlaying, nombre, temperatura);
+        	}
+        	if(flag_end)
+        	{
+        		decodeIR(&buffer,&device, &mensaje);
+        		if(device==0xff)
+        		{
+        			switch(mensaje)
+        			{
+        			case 0xbf: //NEXT
+        				AudioState=AUDIO_STATE_NEXT;
+        				IsPlaying=1;
+        				break;
+        			case 0xbb: //PREV
+        				AudioState=AUDIO_STATE_PREVIOUS;
+        				IsPlaying=1;
+        				break;
+        			case 0xbc: //PLAY-PAUSE
+        				if(AudioState==AUDIO_STATE_PLAY)
+        				{
+        					AudioState=AUDIO_STATE_PAUSE;
+        					IsPlaying=0;
+        				}
+        				else if(AudioState==AUDIO_STATE_WAIT)
+        				{
+        					AudioState=AUDIO_STATE_RESUME;
+        					IsPlaying=1;
+        				}
+        				break;
+        			case 0xf8: //VOLUME DOWN
+        				AudioState=AUDIO_STATE_VOLUME_DOWN;
+        				break;
+        			case 0xea: //VOLUME UP
+        				AudioState=AUDIO_STATE_VOLUME_UP;
+        				break;
+        			}
+        			flag_end=0;
+        			imprimeLCD(1,&mensaje, IsPlaying, nombre, temperatura);
+        		}
+        	}
+        	if(convCompleted)
+        	{
+        		temperatura=0.0f;
+        		Vsense=0.0f;
+        		for(int i=0;i<3;i++)
+        		{
+        			Vsense=((2910.0/0x3FF)*(float)ADC_value[i])/1000.0;
+        			temperatura+=((Vsense-0.76)/0.0025)+25;
+        		}
+        		temperatura/=3;
+        		imprimeLCD(1,&mensaje, IsPlaying, nombre, temperatura);
+        		convCompleted=0;
+        	}
+       		if(AudioState==AUDIO_STATE_STOP)
+      		{
+      			IsFinished=1;
+       		}
+        }
+    }
+    else
+    {
+    	if(strcmp(nombre,"Insert USB"))
+    	{
+    		imprimeLCD(0,&mensaje, IsPlaying, nombre, temperatura);
+    	}
+    }
   }
   /* USER CODE END 3 */
 }
@@ -143,10 +273,10 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 10;
-  RCC_OscInitStruct.PLL.PLLN = 96;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 72;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
+  RCC_OscInitStruct.PLL.PLLQ = 3;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -157,13 +287,77 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.Resolution = ADC_RESOLUTION_10B;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 3;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Rank = 3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -288,7 +482,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 2399;
+  htim2.Init.Prescaler = 7199;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 4294967295;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -327,6 +521,51 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 7199;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 49999;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -334,11 +573,15 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
 
@@ -356,9 +599,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_4, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : PC0 */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
@@ -367,10 +614,64 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PD4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim)
+{
+	if(htim->Instance==TIM2)
+	{
+		if(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1)) //Nos aseguramos de que esté la señal del receptor IR a nivel bajo
+		{
+			getDataIR(&buffer,__HAL_TIM_GET_COUNTER(htim),&flag_end);
+		}
+		__HAL_TIM_SET_COUNTER(htim,0); //Volvemos a poner el temporizador a cero para la siguiente cuenta
 
+	}
+}
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+	convCompleted=1;
+}
+void imprimeLCD(uint8_t USB_connected,uint8_t* mensaje, uint8_t IsPlaying, char* nombre,float temperatura)
+{
+	if(USB_connected)
+	{
+		lcd16x2_i2c_clear();
+		lcd16x2_i2c_1stLine();
+		lcd16x2_i2c_printf("T:%dC",(int)temperatura);
+		if(IsPlaying)
+		{
+			lcd16x2_i2c_setCursor(0, 9);
+			lcd16x2_i2c_printf("PLAY");
+			lcd16x2_i2c_setCursor(0, 0);
+		}
+		else
+		{
+			lcd16x2_i2c_setCursor(0, 9);
+			lcd16x2_i2c_printf("PAUSE");
+			lcd16x2_i2c_setCursor(0, 0);
+		}
+		lcd16x2_i2c_2ndLine();
+		lcd16x2_i2c_printf(nombre);
+		lcd16x2_i2c_1stLine();
+	}
+	else
+	{
+		strcpy(nombre,"Insert USB");
+		lcd16x2_i2c_clear();
+		lcd16x2_i2c_2ndLine();
+		lcd16x2_i2c_printf(nombre);
+		lcd16x2_i2c_1stLine();
+	}
+}
 /* USER CODE END 4 */
 
 /**

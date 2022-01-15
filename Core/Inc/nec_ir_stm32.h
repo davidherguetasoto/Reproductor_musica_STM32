@@ -20,6 +20,6 @@
 #include"main.h"
 void getDataIR(uint32_t* buffer, uint32_t time, uint8_t* END); //Función encargada de la decodificación de la señal infrarroja
 void decodeIR(uint32_t* buffer, uint8_t* device_code, uint8_t* data); //Función encargada de obtener el código del emisor y el mensaje a partir de la información recibida
-void getButton(uint8_t data, unsigned char* texto); //Devuelve el nombre de la tecla presionada a partir del código recibido
+void getButton(uint8_t data, char* texto); //Devuelve el nombre de la tecla presionada a partir del código recibido
 
 #endif /* SRC_IR_DETECTOR_STM32_H_ */

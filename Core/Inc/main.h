@@ -57,8 +57,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define TIM2_CH2_IR_reciever_Pin GPIO_PIN_1
-#define TIM2_CH2_IR_reciever_GPIO_Port GPIOA
+#define TIM_CH2_IR_receiver_Pin GPIO_PIN_1
+#define TIM_CH2_IR_receiver_GPIO_Port GPIOA
 #define I2C2_SCL_LCD_Pin GPIO_PIN_10
 #define I2C2_SCL_LCD_GPIO_Port GPIOB
 #define I2C2_SDA_LCD_Pin GPIO_PIN_11

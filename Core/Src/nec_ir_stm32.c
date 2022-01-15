@@ -69,7 +69,7 @@ void decodeIR(uint32_t* buffer, uint8_t* device_code, uint8_t* data)
 	}
 }
 
-void getButton(uint8_t data, unsigned char* texto)
+void getButton(uint8_t data, char* texto)
 {
 	/*
 	 * Función para obtener el significado de la tecla pulsada.

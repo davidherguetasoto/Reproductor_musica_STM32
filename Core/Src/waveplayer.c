@@ -231,7 +231,7 @@ AUDIO_ErrorTypeDef AUDIO_PLAYER_Process(bool isLoop)
     break;
     
   case AUDIO_STATE_VOLUME_UP: 
-    if( uwVolume <= 90)
+    if( uwVolume <= 70)
     {
       uwVolume += 10;
     }
