@@ -100,7 +100,7 @@ void MX_USB_HOST_Process(void);
 /* USER CODE BEGIN PFP */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim);
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc);
-void imprimeLCD(uint8_t USB_connected,uint8_t* mensaje, uint8_t IsPlaying, char* nombre,float temperatura);
+void imprimeLCD(uint8_t USB_connected, uint8_t IsPlaying, char* nombre,float temperatura);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -183,7 +183,7 @@ int main(void)
         	if(strcmp(nombre,(char*)FileList.file[idx].name))
         	{
         		strcpy(nombre,(char*)FileList.file[idx].name);
-        		imprimeLCD(1,&mensaje, IsPlaying, nombre, temperatura);
+        		imprimeLCD(1, IsPlaying, nombre, temperatura);
         	}
         	if(flag_end)
         	{
@@ -220,7 +220,7 @@ int main(void)
         				break;
         			}
         			flag_end=0;
-        			imprimeLCD(1,&mensaje, IsPlaying, nombre, temperatura);
+        			imprimeLCD(1, IsPlaying, nombre, temperatura);
         		}
         	}
         	if(convCompleted)
@@ -233,7 +233,7 @@ int main(void)
         			temperatura+=((Vsense-0.76)/0.0025)+25;
         		}
         		temperatura/=3;
-        		imprimeLCD(1,&mensaje, IsPlaying, nombre, temperatura);
+        		imprimeLCD(1, IsPlaying, nombre, temperatura);
         		convCompleted=0;
         	}
        		if(AudioState==AUDIO_STATE_STOP)
@@ -246,7 +246,7 @@ int main(void)
     {
     	if(strcmp(nombre,"Insert USB"))
     	{
-    		imprimeLCD(0,&mensaje, IsPlaying, nombre, temperatura);
+    		imprimeLCD(0, IsPlaying, nombre, temperatura);
     	}
     }
   }
@@ -640,7 +640,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
 	convCompleted=1;
 }
-void imprimeLCD(uint8_t USB_connected,uint8_t* mensaje, uint8_t IsPlaying, char* nombre,float temperatura)
+void imprimeLCD(uint8_t USB_connected, uint8_t IsPlaying, char* nombre,float temperatura)
 {
 	if(USB_connected)
 	{
