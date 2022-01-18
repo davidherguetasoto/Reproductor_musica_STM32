@@ -172,26 +172,37 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
+    //Si el USB se ha conectado correctamente, se inicia la aplicacion
     if(Appli_state==APPLICATION_READY)
     {
-    	Mount_USB();
-    	AUDIO_PLAYER_Start(0);
+    	Mount_USB();		 //Se monta el USB
+    	AUDIO_PLAYER_Start(0);  //Se comienza a reproducir la primera cancion de la lista
     	IsPlaying=1;
         while(!IsFinished)
         {
-       		AUDIO_PLAYER_Process(true);
-        	idx=getFilePos();
-        	if(strcmp(nombre,(char*)FileList.file[idx].name))
+       	AUDIO_PLAYER_Process(true);
+       	
+       	/*Se obtiene el nombre de la canción que se encuentra en
+       	reproduccion para poder imprimirlo en el LCD. Para ello
+       	se introduce en la caden "nombre" y se imprime
+       	 */
+       	idx=getFilePos(); //Se obtiene la posicion de la lista de la cancion que se reproduce
+        	if(strcmp(nombre,(char*)FileList.file[idx].name)) //Si el contenido de "nombre" es distinto al del archivo que se esta reproduciendo
         	{
-        		strcpy(nombre,(char*)FileList.file[idx].name);
-        		imprimeLCD(1, IsPlaying, nombre, temperatura);
+        		strcpy(nombre,(char*)FileList.file[idx].name); //Se copia el nombre del archivo en "nombre"
+        		imprimeLCD(1, IsPlaying, nombre, temperatura); //Se imprime en el LCD
         	}
+        	
+        	/*Si han llegado nuevos datos al buffer del control remoto
+        	se obtienen de el los datos recibidos y el codigo del dispositivo emisor,
+        	y dependiendo de lo que le haya llegado, realizara una funcion u otra
+        	*/
         	if(flag_end)
         	{
-        		decodeIR(&buffer,&device, &mensaje);
-        		if(device==0xff)
+        		decodeIR(&buffer,&device, &mensaje); //Se obtiene el mensaje enviado y el codigo del dispositivo a partir de los datos del buffer
+        		if(device==0xff) //Si el codigo del dispositivo emisor coincide con el de nuestro control remoto
         		{
-        			switch(mensaje)
+        			switch(mensaje) //Se realizara una accion sobre el control de la musica dependiendo de que le haya llegado
         			{
         			case 0xbf: //NEXT
         				AudioState=AUDIO_STATE_NEXT;
@@ -220,10 +231,14 @@ int main(void)
         				AudioState=AUDIO_STATE_VOLUME_UP;
         				break;
         			}
-        			flag_end=0;
-        			imprimeLCD(1, IsPlaying, nombre, temperatura);
+        			flag_end=0; //Se vuelve a poner a cero la marca de fin para poder hacer nuevas lecturas de datos
+        			imprimeLCD(1, IsPlaying, nombre, temperatura); //Se imprime de nuevo el LCD
         		}
         	}
+        	
+        	/*Si se ha realizado una lectura del sensor de temperatura, se convertiran los datos de las
+        	lecturas y se hara una media para obtener la medida de la temperatura
+        	*/
         	if(convCompleted)
         	{
         		temperatura=0.0f;
@@ -237,15 +252,17 @@ int main(void)
         		imprimeLCD(1, IsPlaying, nombre, temperatura);
         		convCompleted=0;
         	}
-       		if(AudioState==AUDIO_STATE_STOP)
+        	
+       	if(AudioState==AUDIO_STATE_STOP)
       		{
       			IsFinished=1;
-       		}
+       	}
         }
     }
+    //Si el USB no se ha conectado, la aplicacion no iniciara y mostrara un mensaje en el LCD
     else
     {
-    	if(strcmp(nombre,"Insert USB"))
+    	if(strcmp(nombre,"Insert USB")) //El mensaje se introducira en la cadena "nombre". Comprueba si el contenido es el mismo que el mensaje para hacer solo una impersion en el LCD
     	{
     		imprimeLCD(0, IsPlaying, nombre, temperatura);
     	}
@@ -631,7 +648,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim)
 	{
 		if(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1)) //Nos aseguramos de que esté la señal del receptor IR a nivel bajo
 		{
-			getDataIR(&buffer,__HAL_TIM_GET_COUNTER(htim),&flag_end);
+			getDataIR(&buffer,__HAL_TIM_GET_COUNTER(htim),&flag_end); //Se obtienen los datos obtenidos y se alamacenan en "buffer"
 		}
 		__HAL_TIM_SET_COUNTER(htim,0); //Volvemos a poner el temporizador a cero para la siguiente cuenta
 
@@ -639,10 +656,23 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim)
 }
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-	convCompleted=1;
+	convCompleted=1; //Cuando se ha completado una conversion con el ADC, se pone la marca a 1
 }
 void imprimeLCD(uint8_t USB_connected, uint8_t IsPlaying, char* nombre,float temperatura)
 {
+	/*
+	Funcion empleada para la impresion de informacion en la pantalla LCD.
+	Se le habra de pasar una variable que le indique si el USB ha sido conectado o no.
+	Si no ha sido conectado, se copiara el mensaje "Insert USB" en la cadena "nombre"
+	y se imprimira.
+	Si el USB ha sido detectado, se imprimira en el LCD la temperatura registrada,
+	el nombre de la cancion que se encuentra en reproduccion, y el mensaje "PLAY" o
+	"PAUSE" en funcion de si la cancion se esta reproduciendo o esta pausada. Para ello
+	se le ha de pasar una marca "IsPlaying" que verifique la reproduccion de la cancion.
+	Para imprimir cualquier cosa en el LCD, habra que limpiar siempre el contenido de lo
+	que ya hay impreso, y tras finalizar, se habra de regresar el cursor del LCD a su posicion
+	de referencia (0,0).
+	*/
 	if(USB_connected)
 	{
 		lcd16x2_i2c_clear();
