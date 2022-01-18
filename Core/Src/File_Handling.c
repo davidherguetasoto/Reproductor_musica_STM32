@@ -84,7 +84,11 @@ FRESULT AUDIO_StorageParse(void)
 
 uint16_t AUDIO_GetWavObjectNumber(void)
 {
-	if (AUDIO_StorageParse() == FR_OK) return NumObs;
+	if (AUDIO_StorageParse() == FR_OK)
+	{
+		return NumObs;
+	}
+	else return 0;
 }
 
 void Mount_USB (void)
